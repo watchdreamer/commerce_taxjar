@@ -1,0 +1,854 @@
+<?php
+
+/**
+ * @file
+ * Calculate Sales Tax using TaxJar.
+ */
+
+/**
+ * Implements hook_page_alter().
+ */
+function commerce_taxjar_page_alter() {
+  $path = current_path();
+  if (module_exists('commerce_tax') && strpos($path, 'admin/commerce/config/taxes') === 0) {
+    drupal_set_message(t('Please disable Commerce Tax module to avoid duplicate sales tax line items. Configure Commerce TaxJar !here.', array('!here' => l(t('here'), 'admin/commerce/config/taxjar'))));
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function commerce_taxjar_permission() {
+  return array(
+    'administer taxjar' => array(
+      'title' => t('Administer Commerce TaxJar'),
+      'description' => t('Allows users to configure Commerce TaxJar'),
+      'restrict access' => TRUE,
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_access().
+ */
+function commerce_taxjar_field_access($op, $field, $entity_type, $entity, $account) {
+  if ($field['field_name'] == 'taxjar_category_code') {
+    return FALSE;
+  }
+}
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_taxjar_menu() {
+  $items = array();
+  $items['admin/commerce/config/taxjar'] = array(
+    'title' => 'TaxJar',
+    'description' => 'TaxJar Configuration',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('commerce_taxjar_settings_form'),
+    'file' => 'includes/commerce_taxjar.admin.inc',
+    'access arguments' => array('administer taxjar'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_commerce_line_item_type_info().
+ */
+function commerce_taxjar_commerce_line_item_type_info() {
+  $line_item_types = array();
+
+  $line_item_types['taxjar'] = array(
+    'name' => t('Sales tax'),
+    'description' => t('Calculate Tax with TaxJar'),
+    'add_form_submit_value' => t('Add Sales tax'),
+    'base' => 'commerce_taxjar_line_item',
+    'callbacks' => array(
+      'configuration' => 'commerce_taxjar_configure_line_item',
+      'title' => 'commerce_taxjar_line_item_title',
+    ),
+  );
+
+  return $line_item_types;
+}
+
+/**
+ * Line item callback: configures the TaxJar line item type on module enable.
+ */
+function commerce_taxjar_configure_line_item() {
+  $field_name = 'taxjar_details';
+  $type = 'taxjar';
+
+  $field = field_info_field($field_name);
+  $instance = field_info_instance('commerce_line_item', $field_name, $type);
+
+  if (empty($field)) {
+    $field = array(
+      'field_name' => $field_name,
+      'type' => 'text_long',
+      'cardinality' => 1,
+      'entity_types' => array('commerce_line_item'),
+      'translatable' => FALSE,
+      'locked' => TRUE,
+    );
+    $field = field_create_field($field);
+  }
+
+  if (empty($instance)) {
+    $instance = array(
+      'field_name' => $field_name,
+      'entity_type' => 'commerce_line_item',
+      'bundle' => $type,
+      'label' => t('TaxJar Sales Tax Metadata'),
+      'settings' => array(),
+      'widget' => array(
+        'type' => 'text_textarea',
+        'weight' => 0,
+      ),
+      'display' => array(
+        'display' => array(
+          'label' => 'hidden',
+          'weight' => 0,
+        ),
+      ),
+    );
+    field_create_instance($instance);
+  }
+}
+
+/**
+ * Returns the title of an TaxJar line item.
+ */
+function commerce_taxjar_line_item_title($line_item) {
+  return !empty($line_item->line_item_label) ? $line_item->line_item_label : t('Tax');
+}
+
+/**
+ * Implements hook_commerce_price_component_type_info().
+ */
+function commerce_taxjar_commerce_price_component_type_info() {
+  $components = array();
+
+  // Define a generic Tax price component type.
+  $components['taxjar'] = array(
+    'title' => t('TaxJar sales tax'),
+    'display_title' => t('Sales Tax'),
+    'weight' => 25,
+  );
+
+  return $components;
+}
+
+/**
+ * Submit function for manual line item creation form.
+ */
+function commerce_taxjar_line_item_add_form_submit($line_item, $element, &$form_state, $form) {
+  module_load_include('inc', 'commerce_taxjar', 'includes/commerce_taxjar.calc');
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $form_state['commerce_order']);
+  // Prepare the request.
+  $request = commerce_taxjar_create_tax_request($order_wrapper, $form_state['commerce_taxjar']['to_address']);
+
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  $response = commerce_taxjar_post('taxes', $request);
+
+  if (!empty($response['tax'])) {
+    $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+    $tax_price = array(
+      'amount' => commerce_currency_decimal_to_amount($response['tax']['amount_to_collect'], $currency_code),
+      'currency_code' => $currency_code,
+      'data' => array(),
+    );
+
+    commerce_taxjar_set_price_component($line_item_wrapper, $tax_price);
+
+    // Save serialized api result to field.
+    $line_item_wrapper->taxjar_details = serialize($response['tax']);
+
+    $line_item_wrapper->save();
+  }
+  else {
+    drupal_set_message(t('Sales tax could not be calculated - please check recent log messages for more detail.'), 'error');
+    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+  }
+}
+
+/**
+ * Updates the TaxJar categories vocabulary.
+ */
+function commerce_taxjar_update_categories() {
+  $categories = commerce_taxjar_get('categories');
+
+  if (empty($categories)) {
+    drupal_set_message(t('TaxJar product categories could not be updated - please try again later.'), 'warning');
+  }
+  else {
+    $vocabulary = taxonomy_vocabulary_machine_name_load('taxjar_categories');
+    $terms = entity_load('taxonomy_term', FALSE, array('vid' => $vocabulary->vid));
+
+    // Build array of existing categories keyed by TaxJar category code.
+    $existing_terms = array();
+    foreach ($terms as $term) {
+      $existing_terms[$term->taxjar_category_code[LANGUAGE_NONE][0]['value']] = $term;
+    }
+
+    // Loop through categories, updating or adding as necessary.
+    foreach ($categories['categories'] as $category) {
+      if (empty($existing_terms[$category['product_tax_code']])) {
+        $term = entity_create('taxonomy_term', array('vid' => $vocabulary->vid, 'vocabulary_machine_name' => 'taxjar_categories'));
+      }
+      else {
+        $term = $existing_terms[$category['product_tax_code']];
+      }
+      $wrapper = entity_metadata_wrapper('taxonomy_term', $term);
+      $wrapper->name = $category['name'];
+      $wrapper->taxjar_category_code = $category['product_tax_code'];
+      $wrapper->description = $category['description'];
+      $wrapper->save();
+    }
+
+    drupal_set_message(t('TaxJar product categories updated.'));
+  }
+}
+
+/**
+ * Sends HTTP GET request to endpoint.
+ *
+ * @return array
+ *   Returns an array containing the API response, or FALSE on failure.
+ */
+function commerce_taxjar_get($endpoint, $data = NULL) {
+  $curl_opts = array(
+    // Return result instead of echoing.
+    CURLOPT_RETURNTRANSFER => TRUE,
+    // Follow redirects, Location: headers.
+    CURLOPT_FOLLOWLOCATION => FALSE,
+    // But dont redirect more than 10 times.
+    CURLOPT_MAXREDIRS => 10,
+    // Abort if network connection takes more than 10 seconds.
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => TRUE,
+  );
+
+  $curl_opts[CURLOPT_HTTPHEADER] = array(
+    'Authorization: Token token="' . variable_get('commerce_taxjar_api_key') . '"',
+  );
+
+  $url = 'https://api.taxjar.com/v2/' . $endpoint;
+  if (!empty($data)) {
+    $url .= '?' . drupal_http_build_query($data);
+  }
+  $curl = curl_init($url);
+  foreach ($curl_opts as $opt => $val) {
+    curl_setopt($curl, $opt, $val);
+  }
+
+  $body = curl_exec($curl);
+  curl_close($curl);
+
+  if ($body) {
+    $body_parsed = json_decode($body, TRUE);
+    // Don't log error if a 404 is a valid return value.
+    if (!empty($body_parsed['error']) && !(substr($url, 0, -7) == '-refund' && $body_parsed['status'] == '404')) {
+      watchdog('commerce_taxjar', 'TaxJar request failed. Request url: %url Message: %msg', array(
+        '%url' => $url,
+        '%msg' => $body_parsed['detail'],
+      ), WATCHDOG_ERROR);
+      return FALSE;
+    }
+    return $body_parsed;
+  }
+  else {
+    watchdog('commerce_taxjar', 'TaxJar request failed. message: %msg', array(
+      '%msg' => curl_error($curl),
+    ), WATCHDOG_ERROR);
+    return FALSE;
+  }
+}
+
+/**
+ * Sends HTTP POST request to endpoint.
+ *
+ * @return array
+ *   Returns an array containing the API response, or FALSE on failure.
+ */
+function commerce_taxjar_post($endpoint, $data) {
+  $curl_opts = array(
+    CURLOPT_RETURNTRANSFER => TRUE,
+    CURLOPT_FOLLOWLOCATION => FALSE,
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => TRUE,
+    CURLOPT_CUSTOMREQUEST => 'POST',
+  );
+
+  $curl_opts[CURLOPT_HTTPHEADER] = array(
+    'Authorization: Token token="' . variable_get('commerce_taxjar_api_key') . '"',
+    'Content-Type: application/json',
+  );
+
+  if (is_array($data)) {
+    $data = json_encode($data);
+  }
+  $curl_opts[CURLOPT_POSTFIELDS] = $data;
+
+  $url = 'https://api.taxjar.com/v2/' . $endpoint;
+  $curl = curl_init($url);
+  foreach ($curl_opts as $opt => $val) {
+    curl_setopt($curl, $opt, $val);
+  }
+
+  $body = curl_exec($curl);
+  curl_close($curl);
+
+  if ($body) {
+    $body_parsed = json_decode($body, TRUE);
+    if (!empty($body_parsed['error'])) {
+      watchdog('commerce_taxjar', 'TaxJar request failed. Request url: %url Message: %msg', array(
+        '%url' => $url,
+        '%msg' => $body_parsed['detail'],
+      ), WATCHDOG_ERROR);
+      return FALSE;
+    }
+    return $body_parsed;
+  }
+  else {
+    watchdog('commerce_taxjar', 'TaxJar request failed. message: %msg', array(
+      '%msg' => curl_error($curl),
+    ), WATCHDOG_ERROR);
+    return FALSE;
+  }
+}
+
+/**
+ * Sends HTTP PUT request to endpoint.
+ *
+ * @return array
+ *   Returns an array containing the API response, or FALSE on failure.
+ */
+function commerce_taxjar_put($endpoint, $data) {
+  $curl_opts = array(
+    CURLOPT_RETURNTRANSFER => TRUE,
+    CURLOPT_FOLLOWLOCATION => FALSE,
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => TRUE,
+    CURLOPT_CUSTOMREQUEST => 'PUT',
+  );
+
+  $curl_opts[CURLOPT_HTTPHEADER] = array(
+    'Authorization: Token token="' . variable_get('commerce_taxjar_api_key') . '"',
+    'Content-Type: application/json',
+  );
+
+  if (is_array($data)) {
+    $data = json_encode($data);
+  }
+  $curl_opts[CURLOPT_POSTFIELDS] = $data;
+
+  $url = 'https://api.taxjar.com/v2/' . $endpoint;
+  $curl = curl_init($url);
+  foreach ($curl_opts as $opt => $val) {
+    curl_setopt($curl, $opt, $val);
+  }
+
+  $body = curl_exec($curl);
+  curl_close($curl);
+
+  if ($body) {
+    $body_parsed = json_decode($body, TRUE);
+    if (!empty($body_parsed['error'])) {
+      watchdog('commerce_taxjar', 'TaxJar request failed. Request url: %url Message: %msg', array(
+        '%url' => $url,
+        '%msg' => $body_parsed['detail'],
+      ), WATCHDOG_ERROR);
+      return FALSE;
+    }
+    return $body_parsed;
+  }
+  else {
+    watchdog('commerce_taxjar', 'TaxJar request failed. message: %msg', array(
+      '%msg' => curl_error($curl),
+    ), WATCHDOG_ERROR);
+    return FALSE;
+  }
+}
+
+/**
+ * Sends HTTP DELETE request to endpoint.
+ *
+ * @return array
+ *   Returns an array containing the API response, or FALSE on failure.
+ */
+function commerce_taxjar_delete($endpoint) {
+  $curl_opts = array(
+    CURLOPT_RETURNTRANSFER => TRUE,
+    CURLOPT_FOLLOWLOCATION => FALSE,
+    CURLOPT_MAXREDIRS => 10,
+    CURLOPT_CONNECTTIMEOUT => 10,
+    CURLOPT_SSL_VERIFYPEER => TRUE,
+    CURLOPT_CUSTOMREQUEST => 'DELETE',
+  );
+
+  $curl_opts[CURLOPT_HTTPHEADER] = array(
+    'Authorization: Token token="' . variable_get('commerce_taxjar_api_key') . '"',
+  );
+
+  $url = 'https://api.taxjar.com/v2/' . $endpoint;
+  $curl = curl_init($url);
+  foreach ($curl_opts as $opt => $val) {
+    curl_setopt($curl, $opt, $val);
+  }
+
+  $body = curl_exec($curl);
+  curl_close($curl);
+
+  if ($body) {
+    $body_parsed = json_decode($body, TRUE);
+    if (!empty($body_parsed['error'])) {
+      watchdog('commerce_taxjar', 'TaxJar request failed. Request url: %url Message: %msg', array(
+        '%url' => $url,
+        '%msg' => $body_parsed['detail'],
+      ), WATCHDOG_ERROR);
+      return FALSE;
+    }
+    return $body_parsed;
+  }
+  else {
+    watchdog('commerce_taxjar', 'TaxJar request failed. message: %msg', array(
+      '%msg' => curl_error($curl),
+    ), WATCHDOG_ERROR);
+    return FALSE;
+  }
+}
+
+/**
+ * Implements hook_commerce_cart_order_refresh().
+ *
+ * Calculate taxes on order refresh in order to properly take in account
+ * discounts.
+ */
+function commerce_taxjar_commerce_cart_order_refresh($order_wrapper) {
+  // Skip the request if there are no line items.
+  if ($order_wrapper->commerce_line_items->count() === 0) {
+    return;
+  }
+
+  commerce_taxjar_calculate_tax($order_wrapper);
+}
+
+/**
+ * Returns the configured customer profile field to use.
+ */
+function commerce_taxjar_get_customer_profile_field() {
+  $customer_profile_to_use = variable_get('commerce_taxjar_tax_address', 'shipping');
+  $profile_types = commerce_customer_profile_types();
+
+  // Fallback to the first customer profile type available.
+  if (!isset($profile_types[$customer_profile_to_use])) {
+    $customer_profile_to_use = key($profile_types);
+  }
+
+  $pane_id = 'customer_profile_' . $customer_profile_to_use;
+  if ($field_name = variable_get('commerce_' . $pane_id . '_field', '')) {
+    return $field_name;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Checks if the TaxJar service needs to be called for this address.
+ */
+function commerce_taxjar_check_address(EntityDrupalWrapper $order_wrapper, $field_name) {
+  // Skip the check if the customer profile field is empty.
+  if (!isset($order_wrapper->{$field_name}) || is_null($order_wrapper->{$field_name}->value())) {
+    return FALSE;
+  }
+  if (!isset($order_wrapper->{$field_name}->commerce_customer_address)) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
+/**
+ * Deletes TaxJar line items of an order.
+ *
+ * @param EntityDrupalWrapper $order_wrapper
+ *   The wrapped order entity.
+ * @param bool $skip_save
+ *   Flag indicating whether or not to skip saving the order in this function.
+ */
+function commerce_taxjar_delete_tax_line_items(EntityDrupalWrapper $order_wrapper, $skip_save = FALSE) {
+  $line_items_to_delete = array();
+
+  foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+    // Skip non TaxJar line items.
+    if (!$line_item_wrapper->value() || $line_item_wrapper->getBundle() != 'taxjar') {
+      continue;
+    }
+    $line_items_to_delete[] = $line_item_wrapper->line_item_id->value();
+    $order_wrapper->commerce_line_items->offsetUnset($delta);
+  }
+
+  // If we found line items to delete.
+  if (!empty($line_items_to_delete)) {
+    // First save the order to update the line item reference field value.
+    if (!$skip_save) {
+      $order_wrapper->save();
+    }
+
+    // Delete the line items on shutdown, to prevent the line item controller
+    // delete method to fire and save the order for us.
+    drupal_register_shutdown_function('commerce_line_item_delete_multiple', $line_items_to_delete);
+  }
+}
+
+/**
+ * Sets a tax price component to the provided line item.
+ *
+ * @param EntityMetadataWrapper $line_item_wrapper
+ *   An EntityMetadataWrapper for the line item whose unit price should be
+ *     used in the tax calculation.
+ * @param array $tax_price
+ *   A price array used to initialize the value of the line item's unit price.
+ */
+function commerce_taxjar_set_price_component(EntityMetadataWrapper $line_item_wrapper, array $tax_price) {
+  $line_item_label = t('Sales Tax');
+  $price_component = 'taxjar';
+
+  $line_item_wrapper->line_item_label = $line_item_label;
+  $line_item_wrapper->commerce_unit_price->amount = $tax_price['amount'];
+  $line_item_wrapper->commerce_unit_price->currency_code = $tax_price['currency_code'];
+
+  // Reset the data array of the line item total field to only include a
+  // base price component, set the currency code from the order.
+  $base_price = array(
+    'amount' => 0,
+    'currency_code' => $tax_price['currency_code'],
+    'data' => array(),
+  );
+
+  $line_item_wrapper->commerce_unit_price->data = commerce_price_component_add($base_price, $price_component, $tax_price, TRUE);
+}
+
+/**
+ * Create, add an TaxJar line item to an order, and saves the order.
+ *
+ * @param EntityDrupalWrapper $order_wrapper
+ *   The wrapped order entity.
+ * @param array $api_result
+ *   An array containing the results of the API tax request.
+ *
+ * @return object
+ *   The newly created tax line item wrapper.
+ */
+function commerce_taxjar_add_line_item(EntityDrupalWrapper $order_wrapper, array $api_result) {
+  // Create the new line item.
+  $line_item = entity_create('commerce_line_item', array(
+    'type' => 'taxjar',
+    'order_id' => $order_wrapper->getIdentifier(),
+    'quantity' => 1,
+  ));
+
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+  $tax_price = array(
+    'amount' => commerce_currency_decimal_to_amount($api_result['amount_to_collect'], $currency_code),
+    'currency_code' => $currency_code,
+    'data' => array(),
+  );
+
+  // Sets the unit price.
+  $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
+  commerce_taxjar_set_price_component($line_item_wrapper, $tax_price);
+
+  // Save serialized api result to field.
+  $line_item_wrapper->taxjar_details = serialize($api_result);
+
+  // Save the incoming line item now so we get its ID.
+  commerce_line_item_save($line_item);
+
+  // Add it to the order's line item reference value.
+  $order_wrapper->commerce_line_items[] = $line_item;
+
+  // Return the line item.
+  return $line_item_wrapper;
+}
+
+/**
+ * Updates the unit price and API response of the TaxJar line item if it exists.
+ *
+ * @param EntityDrupalWrapper $order_wrapper
+ *   The wrapped order entity.
+ * @param array $api_result
+ *   An array containing the results of the API tax request.
+ *
+ * @return object|bool
+ *   The tax line item wrapper or FALSE if not found.
+ */
+function commerce_taxjar_set_existing_line_item_price(EntityDrupalWrapper $order_wrapper, array $api_result) {
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+  $tax_price = array(
+    'amount' => commerce_currency_decimal_to_amount($api_result['amount_to_collect'], $currency_code),
+    'currency_code' => $currency_code,
+    'data' => array(),
+  );
+
+  foreach ($order_wrapper->commerce_line_items as $line_item_wrapper) {
+    if (!$line_item_wrapper->value() || $line_item_wrapper->getBundle() != 'taxjar') {
+      continue;
+    }
+    commerce_taxjar_set_price_component($line_item_wrapper, $tax_price);
+
+    // Save serialized api result to field.
+    $line_item_wrapper->taxjar_details = serialize($api_result);
+
+    $line_item_wrapper->save();
+    return $line_item_wrapper;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Performs Tax calculation for a given order.
+ *
+ * @param EntityDrupalWrapper $order_wrapper
+ *   The wrapped order entity.
+ *
+ * @return array|bool
+ *   An associative array containing the request & the response, FALSE in case
+ *   the request could not be performed.
+ */
+function commerce_taxjar_calculate_tax(EntityDrupalWrapper $order_wrapper) {
+  $order = $order_wrapper->value();
+  // Get the customer profile to use for tax calculation.
+  $field_name = commerce_taxjar_get_customer_profile_field();
+
+  // Checks if the Sales Tax needs to be calculated for this address.
+  if (!$field_name || !commerce_taxjar_check_address($order_wrapper, $field_name)) {
+    // Delete any existing TaxJar line items from the order.
+    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+    // Remove the stored request & response from the order's data.
+    $order->data['commerce_taxjar'] = array();
+    return FALSE;
+  }
+
+  if (module_exists('commerce_shipping') && isset(commerce_checkout_panes(array('enabled' => TRUE))['commerce_shipping'])) {
+    // Skip the request if shipping will be included on this order
+    // but has not yet been calculated.
+    $shipping_calculated = FALSE;
+    foreach ($order_wrapper->commerce_line_items as $line_item_wrapper) {
+      $line_item = $line_item_wrapper->value();
+      if ($line_item->type == 'shipping') {
+        $shipping_calculated = TRUE;
+      }
+    }
+    if (!$shipping_calculated) {
+      return FALSE;
+    }
+  }
+
+  module_load_include('inc', 'commerce_taxjar', 'includes/commerce_taxjar.calc');
+
+  $stored_request = array();
+  // Retrieve the stored request in the order's data array,
+  // compare it with the request that's about to be sent, and skip it if
+  // unnecessary.
+  if (isset($order->data['commerce_taxjar']['request'])) {
+    $stored_request = $order->data['commerce_taxjar']['request'];
+  }
+
+  // Prepare the request.
+  $request = commerce_taxjar_create_tax_request($order_wrapper);
+
+  // Stop here if the stored request in the order's object is similar to
+  // the one we're about to perform (i.e no need to perform an unnecessary
+  // request.
+  if ($stored_request == $request) {
+    return array(
+      'request' => $request,
+      'response' => $order->data['commerce_taxjar']['response'] ? $order->data['commerce_taxjar']['response'] : array(),
+    );
+  }
+
+  // Remove the TaxJar data from the order.
+  $order->data['commerce_taxjar'] = array();
+
+  // Only perform the request if the request array contains a "line_items" key.
+  if (empty($request['line_items'])) {
+    // Delete the Tax line item if present.
+    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+    return FALSE;
+  }
+
+  $response = commerce_taxjar_post('taxes', $request);
+
+  if (empty($response['tax']) || !isset($response['tax']['amount_to_collect'])) {
+    // Delete the Tax line item if present.
+    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+    return FALSE;
+  }
+
+  // Store the request & the response in the order's data.
+  $order->data['commerce_taxjar'] = array(
+    'request' => $request,
+    'response' => $response,
+  );
+
+  // Parse the response.
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  // Modify the existing tax line item or add a new one if that fails.
+  if (!commerce_taxjar_set_existing_line_item_price($order_wrapper, $response['tax'])) {
+    commerce_taxjar_add_line_item($order_wrapper, $response['tax']);
+  }
+
+  // Update the total order price, for the next rules condition (if any).
+  commerce_order_calculate_total($order);
+
+  return array(
+    'request' => $request,
+    'response' => $response,
+  );
+}
+
+/**
+ * Implements hook_commerce_cart_order_empty().
+ */
+function commerce_taxjar_commerce_cart_order_empty($order) {
+  // Clean-up task to remove taxjar line items when cart is emptied.
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $line_items_to_delete = array();
+  foreach ($order_wrapper->commerce_line_items as $delta => $line_item_wrapper) {
+    if ($line_item_wrapper->getBundle() == 'taxjar') {
+      $line_items_to_delete[] = $line_item_wrapper->getIdentifier();
+      $order_wrapper->commerce_line_items->offsetUnset($delta);
+    }
+  }
+
+  // Delete line items.
+  commerce_line_item_delete_multiple($line_items_to_delete);
+}
+
+/**
+ * Saves an order transaction to TaxJar.
+ */
+function commerce_taxjar_order_save($order) {
+  module_load_include('inc', 'commerce_taxjar', 'includes/commerce_taxjar.calc');
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $request = commerce_taxjar_create_transaction_request($order_wrapper);
+  commerce_taxjar_post('transactions/orders', $request);
+}
+
+/**
+ * Update an order transaction in TaxJar.
+ */
+function commerce_taxjar_order_update($order) {
+  module_load_include('inc', 'commerce_taxjar', 'includes/commerce_taxjar.calc');
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $request = commerce_taxjar_create_transaction_request($order_wrapper);
+  $original_wrapper = entity_metadata_wrapper('commerce_order', $order->original);
+  $original_request = commerce_taxjar_create_transaction_request($original_wrapper);
+  if ($request != $original_request) {
+    // Update transaction in TaxJar only if it has changed.
+    commerce_taxjar_put('transactions/orders/' . $order_wrapper->getIdentifier(), $request);
+  }
+}
+
+/**
+ * Refund an order transaction in  TaxJar.
+ */
+function commerce_taxjar_order_refund($order) {
+  module_load_include('inc', 'commerce_taxjar', 'includes/commerce_taxjar.calc');
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $request = commerce_taxjar_create_transaction_request($order_wrapper);
+  $request['transaction_reference_id'] = $request['transaction_id'];
+  $request['transaction_id'] = $request['transaction_id'] . '-refund';
+  // Check if a refund for this order already exists.
+  $refund = commerce_taxjar_get('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
+  if (!empty($refund)) {
+    // Update the existing refund if necessary.
+    $original_wrapper = entity_metadata_wrapper('commerce_order', $order->original);
+    $original_request = commerce_taxjar_create_transaction_request($original_wrapper);
+    $original_request['transaction_reference_id'] = $original_request['transaction_id'];
+    $original_request['transaction_id'] = $original_request['transaction_id'] . '-refund';
+    if ($request != $original_request) {
+      commerce_taxjar_put('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund', $request);
+    }
+  }
+  else {
+    // Otherwise create a new refund.
+    commerce_taxjar_post('transactions/refunds', $request);
+  }
+}
+
+/**
+ * Delete an order transaction in  TaxJar.
+ */
+function commerce_taxjar_order_delete($order) {
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  // If a refund exists for this order, delete it as well.
+  $refund = commerce_taxjar_get('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
+  if (!empty($refund)) {
+    commerce_taxjar_delete('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
+  }
+  commerce_taxjar_delete('transactions/orders/' . $order_wrapper->getIdentifier());
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function commerce_taxjar_form_commerce_order_ui_order_form_alter(&$form, &$form_state) {
+  if (!empty($form_state['triggering_element']['#array_parents'][3])) {
+    if ($form_state['triggering_element']['#array_parents'][3] == 'line_item_add' && $form_state['input']['commerce_line_items'][LANGUAGE_NONE]['actions']['line_item_type'] == 'taxjar') {
+
+      $has_shipping_line = FALSE;
+      $address = [];
+      $order_wrapper = entity_metadata_wrapper('commerce_order', $form_state['commerce_order']);
+      $line_items = $order_wrapper->commerce_line_items;
+      foreach ($line_items as $line_item_wrapper) {
+        $line_item = $line_item_wrapper->value();
+        if ($line_item->type == 'shipping') {
+          $has_shipping_line = TRUE;
+          break;
+        }
+      }
+
+      $customer_profile_field = commerce_taxjar_get_customer_profile_field();
+
+      // Retrieve the address from the configured customer profile type, if it exists.
+      if (!empty($customer_profile_field) && isset($order_wrapper->{$customer_profile_field})) {
+        if (isset($order_wrapper->{$customer_profile_field}->commerce_customer_address)) {
+          $address = $order_wrapper->{$customer_profile_field}->commerce_customer_address->value();
+        }
+        // If an address cannot be found, attempt to load it from the form.
+        elseif (!empty($form_state['input'][$customer_profile_field][LANGUAGE_NONE]['profiles'][0]['commerce_customer_address'][LANGUAGE_NONE][0])) {
+          $address = $form_state['input'][$customer_profile_field][LANGUAGE_NONE]['profiles'][0]['commerce_customer_address'][LANGUAGE_NONE][0];
+        }
+        if (empty($address['country'])) {
+          // Attempt to load country from field default.
+          $info = $form[$customer_profile_field][LANGUAGE_NONE]['profiles'][0];
+          $instance_info = field_info_instance($info['#entity_type'], 'commerce_customer_address', $info['#bundle']);
+          $address['country'] = $instance_info['widget']['settings']['default_country'];
+        }
+      }
+
+      // Make sure address contains required elements.
+      if (empty($address['thoroughfare']) || empty($address['thoroughfare']) || empty($address['locality']) || empty($address['administrative_area']) || empty($address['postal_code']) || empty($address['country'])) {
+        drupal_set_message(t('A valid ship to address is required before sales tax can be calculated.'), 'error');
+        $form['commerce_line_items'][LANGUAGE_NONE]['actions']['save_line_item']['#access'] = FALSE;
+      }
+      elseif (!$has_shipping_line) {
+        drupal_set_message(t('Shipping amount is required for sales tax calculation. If there will be a charge for shipping on this order, please add the appropriate line item before calculating sales tax.'), 'warning');
+      }
+
+      $form_state['commerce_taxjar']['to_address'] = $address;
+
+    }
+  }
+}
