@@ -106,7 +106,7 @@ function _commerce_taxjar_prepare_request_body($order_wrapper, array $to_address
     }
   }
   else {
-    $customer_profile_field = commerce_taxjar_get_customer_profile_field();
+    $customer_profile_field = commerce_taxjar_get_customer_profile_field($order_wrapper);
 
     // Retrieve the address from the configured customer profile type,
     // return false if none is available.
@@ -159,9 +159,11 @@ function _commerce_taxjar_request_add_lines(array &$request_body, $line_items, $
       }
       $tax_data = unserialize($line_item_wrapper->taxjar_details->value());
       $request_body['sales_tax'] = $line_item_wrapper->commerce_total->amount_decimal->value();
-      $line_items_tax_collected = array();
-      foreach ($tax_data['breakdown']['line_items'] as $item) {
-        $line_items_tax_collected[$item['id']] = $item['tax_collectable'];
+      if ($request_body['sales_tax'] != 0) {
+        $line_items_tax_collected = array();
+        foreach ($tax_data['breakdown']['line_items'] as $item) {
+          $line_items_tax_collected[$item['id']] = $item['tax_collectable'];
+        }
       }
       break;
     }
@@ -189,7 +191,7 @@ function _commerce_taxjar_request_add_lines(array &$request_body, $line_items, $
       if ($is_transaction) {
         $newline['product_identifier'] = $line_item_wrapper->commerce_product->sku->value();
         $newline['description'] = $line_item_wrapper->commerce_product->title->value();
-        $newline['sales_tax'] = $line_items_tax_collected[$line_item->line_item_id];
+        $newline['sales_tax'] = isset($line_items_tax_collected[$line_item->line_item_id]) ? $line_items_tax_collected[$line_item->line_item_id] : 0;
       }
 
       // Get the tax code from the "Tax code" term referenced by the product.

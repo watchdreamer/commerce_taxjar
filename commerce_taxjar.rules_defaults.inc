@@ -109,5 +109,27 @@ function commerce_taxjar_default_rules_configuration() {
     }
   }');
 
+  $rules['commerce_taxjar_override_tax_address_for_non_shipped_orders'] = rules_import(
+    '{ "commerce_taxjar_override_tax_address_for_non_shipped_orders" : {
+      "LABEL" : "Override address used for tax calulation on orders with no physically shipped items",
+      "PLUGIN" : "reaction rule",
+      "TAGS" : [ "Commerce TaxJar" ],
+      "REQUIRES" : [ "commerce_taxjar" ],
+      "ACTIVE" : false,
+      "ON" : { "commerce_taxjar_select_tax_address" : [] },
+      "IF" : [
+        { "commerce_order_contains_products_of_category" : {
+            "commerce_order" : [ "commerce_order" ],
+            "mode" : "exclusive",
+            "category" : { "value" : { "25" : "25", "31" : "31" } }
+          }
+        }
+      ],
+      "DO" : [
+        { "commerce_taxjar_select_address_profile" : { "commerce_order" : [ "commerce_order" ], "profile" : "billing" } }
+      ]
+    }
+  }');
+
   return $rules;
 }

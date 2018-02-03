@@ -251,7 +251,7 @@ function commerce_taxjar_get($endpoint, $data = NULL) {
   if ($body) {
     $body_parsed = json_decode($body, TRUE);
     // Don't log error if a 404 is a valid return value.
-    if (!empty($body_parsed['error']) && !(substr($url, 0, -7) == '-refund' && $body_parsed['status'] == '404')) {
+    if (!empty($body_parsed['error']) && !(substr($url, -7) == '-refund' && $body_parsed['status'] == '404')) {
       watchdog('commerce_taxjar', 'TaxJar request failed. Request url: %url Message: %msg', array(
         '%url' => $url,
         '%msg' => $body_parsed['detail'],
@@ -442,8 +442,15 @@ function commerce_taxjar_commerce_cart_order_refresh($order_wrapper) {
 /**
  * Returns the configured customer profile field to use.
  */
-function commerce_taxjar_get_customer_profile_field() {
-  $customer_profile_to_use = variable_get('commerce_taxjar_tax_address', 'shipping');
+function commerce_taxjar_get_customer_profile_field($order_wrapper) {
+  rules_invoke_event('commerce_taxjar_select_tax_address', $order_wrapper);
+  $order = $order_wrapper->value();
+  if (isset($order->data['commerce_taxjar']['profile'])) {
+    $customer_profile_to_use = $order->data['commerce_taxjar']['profile'];
+  }
+  else {
+    $customer_profile_to_use = variable_get('commerce_taxjar_tax_address', 'shipping');
+  }
   $profile_types = commerce_customer_profile_types();
 
   // Fallback to the first customer profile type available.
@@ -627,7 +634,7 @@ function commerce_taxjar_set_existing_line_item_price(EntityDrupalWrapper $order
 function commerce_taxjar_calculate_tax(EntityDrupalWrapper $order_wrapper) {
   $order = $order_wrapper->value();
   // Get the customer profile to use for tax calculation.
-  $field_name = commerce_taxjar_get_customer_profile_field();
+  $field_name = commerce_taxjar_get_customer_profile_field($order_wrapper);
 
   // Checks if the Sales Tax needs to be calculated for this address.
   if (!$field_name || !commerce_taxjar_check_address($order_wrapper, $field_name)) {
@@ -801,6 +808,18 @@ function commerce_taxjar_order_delete($order) {
 }
 
 /**
+ * Sets the address profile to use for tax calculation.
+ *
+ * @param object $order
+ *   The order entity.
+ * @param string $type
+ *   The machine name of the profile to use.
+ */
+function commerce_taxjar_select_address_profile($order, $type) {
+  $order->data['commerce_taxjar']['profile'] = $type;
+}
+
+/**
  * Implements hook_form_FORM_ID_alter().
  */
 function commerce_taxjar_form_commerce_order_ui_order_form_alter(&$form, &$form_state) {
@@ -819,7 +838,7 @@ function commerce_taxjar_form_commerce_order_ui_order_form_alter(&$form, &$form_
         }
       }
 
-      $customer_profile_field = commerce_taxjar_get_customer_profile_field();
+      $customer_profile_field = commerce_taxjar_get_customer_profile_field($order_wrapper);
 
       // Retrieve the address from the configured customer profile type, if it exists.
       if (!empty($customer_profile_field) && isset($order_wrapper->{$customer_profile_field})) {
