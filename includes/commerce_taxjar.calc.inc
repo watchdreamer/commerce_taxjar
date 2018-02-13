@@ -29,6 +29,9 @@ function commerce_taxjar_create_tax_request(EntityDrupalWrapper $order_wrapper, 
     return FALSE;
   }
 
+  // Add plugin identifier to request.
+  $request_body['plugin'] = 'drupal-commerce';
+
   _commerce_taxjar_request_add_lines($request_body, $order_wrapper->commerce_line_items);
   $order = $order_wrapper->value();
   drupal_alter('commerce_taxjar_tax_request', $request_body, $order);
@@ -152,6 +155,7 @@ function _commerce_taxjar_request_add_lines(array &$request_body, $line_items, $
 
   // If we are creating a transaction, extract the TaxJar lineitem data.
   if ($is_transaction) {
+    $request_body['sales_tax'] = 0;
     foreach ($line_items as $line_item_wrapper) {
       $line_item = $line_item_wrapper->value();
       if ($line_item->type != 'taxjar') {

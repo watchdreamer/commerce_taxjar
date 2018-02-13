@@ -30,6 +30,19 @@ function commerce_taxjar_settings_form($form, &$form_state) {
     '#type' => 'fieldset',
   );
 
+  $form['general']['commerce_taxjar_enable_calculation'] = array(
+    '#title' => t('Use TaxJar for sales tax calculation'),
+    '#type' => 'checkbox',
+    '#default_value' => variable_get('commerce_taxjar_enable_calculation', TRUE),
+  );
+
+  $form['general']['commerce_taxjar_enable_reporting'] = array(
+    '#title' => t('Use TaxJar for sales tax reporting'),
+    '#description' => t('Record order transactions to TaxJar for automated reporting / filing.'),
+    '#type' => 'checkbox',
+    '#default_value' => variable_get('commerce_taxjar_enable_reporting', TRUE),
+  );
+
   // Configure address to use for sales tax.
   $form['general']['commerce_taxjar_tax_address'] = array(
     '#title' => t('Destination Address to use for Sales Tax calculation'),
@@ -190,8 +203,45 @@ function commerce_taxjar_settings_form($form, &$form_state) {
       '#limit_validation_errors' => array(),
       '#submit' => array('commerce_taxjar_update_categories'),
       '#ajax' => array(
-        'callback' => 'commerce_taxjar_settings_form_ajax_callback',
+        'callback' => 'commerce_taxjar_settings_form_ajax_categories',
         'wrapper' => 'taxjar-categories',
+        'effect' => 'fade',
+        'progress' => array(
+          'type' => 'throbber',
+        ),
+      ),
+    );
+
+    $form['nexus'] = array(
+      '#title' => t('Nexus Regions'),
+      '#type' => 'fieldset',
+      '#description' => t('TaxJar stores the regions in which you have sales tax nexus. If you have updated your nexus regions in TaxJar, you can sync those changes here.'),
+      '#prefix' => '<div id="taxjar-nexus">',
+      '#suffix' => '</div>',
+    );
+
+    $query = db_query('SELECT n.country, n.region FROM {commerce_taxjar_nexus_regions} n');
+    $result = $query->fetchAll();
+    $rows = array();
+    foreach ($result as $row) {
+      $rows[] = array($row->country, $row->region);
+    }
+
+    $form['nexus']['table'] = array(
+      '#theme' => 'table',
+      '#header' => array(t('Country'), t('Region')),
+      '#rows' => $rows,
+    );
+
+    $form['nexus']['taxjar_nexus_sync'] = array(
+      '#type' => 'submit',
+      '#name' => 'sync_nexus',
+      '#value' => 'Sync Nexus',
+      '#limit_validation_errors' => array(),
+      '#submit' => array('commerce_taxjar_sync_nexus'),
+      '#ajax' => array(
+        'callback' => 'commerce_taxjar_settings_form_ajax_nexus',
+        'wrapper' => 'taxjar-nexus',
         'effect' => 'fade',
         'progress' => array(
           'type' => 'throbber',
@@ -216,18 +266,50 @@ function commerce_taxjar_settings_form_validate($form, &$form_state) {
 }
 
 /**
- * AJAX callback.
+ * AJAX callback for categories.
  */
-function commerce_taxjar_settings_form_ajax_callback($form, $form_state) {
+function commerce_taxjar_settings_form_ajax_categories($form, $form_state) {
   $form['categories']['taxjar_categories_update']['#attributes']['disabled'] = 'disabled';
   return $form['categories'];
+}
+
+/**
+ * AJAX callback for nexus.
+ */
+function commerce_taxjar_settings_form_ajax_nexus($form, $form_state) {
+  $form['nexus']['taxjar_nexus_sync']['#attributes']['disabled'] = 'disabled';
+  return $form['nexus'];
+}
+
+/**
+ * Submit function for nexus sync.
+ */
+function commerce_taxjar_sync_nexus($form, &$form_state) {
+  // Remove all existing regions.
+  db_truncate('commerce_taxjar_nexus_regions')->execute();
+
+  // Fetch nexus regions from API.
+  $regions = commerce_taxjar_get('nexus/regions');
+  $query = db_insert('commerce_taxjar_nexus_regions')->fields(array(
+    'country_code',
+    'country',
+    'region_code',
+    'region',
+  ));
+  foreach ($regions['regions'] as $region) {
+    $query->values($region);
+  }
+  $query->execute();
+
+  $form_state['rebuild'] = TRUE;
 }
 
 /**
  * Additional submit handler for settings form.
  */
 function commerce_taxjar_settings_form_submit($form, &$form_state) {
-  // If this is the first time the form is saved, update categories.
+  // If this is the first time the form is saved, update categories
+  // and nexus regions.
   $vocabulary = taxonomy_vocabulary_machine_name_load('taxjar_categories');
   $query = new EntityFieldQuery();
   $terms = $query->entityCondition('entity_type', 'taxonomy_term')
@@ -236,5 +318,41 @@ function commerce_taxjar_settings_form_submit($form, &$form_state) {
     ->execute();
   if (empty($terms)) {
     commerce_taxjar_update_categories();
+
+    // Fetch nexus regions from API.
+    $regions = commerce_taxjar_get('nexus/regions');
+    $query = db_insert('commerce_taxjar_nexus_regions')->fields(array(
+      'country_code',
+      'country',
+      'region_code',
+      'region',
+    ));
+    foreach ($regions['regions'] as $region) {
+      $query->values($region);
+    }
+    $query->execute();
+  }
+
+  // Enable / disable rules as necessary.
+  $reporting_rules = array(
+    'commerce_taxjar_update_order',
+    'commerce_taxjar_save_order',
+    'commerce_taxjar_refund_order',
+    'commerce_taxjar_delete_order',
+  );
+
+  if ($form_state['values']['commerce_taxjar_enable_reporting']) {
+    foreach ($reporting_rules as $rule) {
+      $rules_config = rules_config_load($rule);
+      $rules_config->active = TRUE;
+      $rules_config->save();
+    }
+  }
+  else {
+    foreach ($reporting_rules as $rule) {
+      $rules_config = rules_config_load($rule);
+      $rules_config->active = FALSE;
+      $rules_config->save();
+    }
   }
 }

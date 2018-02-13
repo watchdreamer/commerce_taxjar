@@ -29,6 +29,50 @@ function commerce_taxjar_requirements($phase) {
 }
 
 /**
+ * Implements hook_schema().
+ */
+function commerce_taxjar_schema() {
+  $schema['commerce_taxjar_nexus_regions'] = array(
+    'description' => 'Table which contains TaxJar nexus regions.',
+    'fields' => array(
+      'country' => array(
+        'description' => 'The full name of the nexus country.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'country_code' => array(
+        'description' => 'ISO country code.',
+        'type' => 'varchar',
+        'length' => 8,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'region' => array(
+        'description' => 'The full name of the nexus region.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'region_code' => array(
+        'description' => 'ISO region code.',
+        'type' => 'varchar',
+        'length' => 8,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+    ),
+    'primary key' => array(
+      'country_code',
+      'region_code',
+    ),
+  );
+  return $schema;
+}
+
+/**
  * Implements hook_install().
  */
 function commerce_taxjar_install() {
@@ -87,6 +131,7 @@ function commerce_taxjar_install() {
         'allowed_values' => array(
           0 => array(
             'vocabulary' => 'taxjar_categories',
+            'parent' => 0,
           ),
         ),
       ),
@@ -113,12 +158,7 @@ function commerce_taxjar_install() {
         'field_name' => 'commerce_taxjar_tax_code',
         'label' => 'TaxJar Category',
         'widget' => array(
-          'module' => 'taxonomy',
-          'settings' => array(
-            'autocomplete_path' => 'taxonomy/autocomplete',
-            'size' => 60,
-          ),
-          'type' => 'taxonomy_autocomplete',
+          'type' => 'options_select',
           'weight' => -4,
         ),
       ));

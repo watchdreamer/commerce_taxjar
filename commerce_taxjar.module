@@ -151,28 +151,32 @@ function commerce_taxjar_line_item_add_form_submit($line_item, $element, &$form_
   $request = commerce_taxjar_create_tax_request($order_wrapper, $form_state['commerce_taxjar']['to_address']);
 
   $line_item_wrapper = entity_metadata_wrapper('commerce_line_item', $line_item);
-  $response = commerce_taxjar_post('taxes', $request);
 
-  if (!empty($response['tax'])) {
-    $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
-
-    $tax_price = array(
-      'amount' => commerce_currency_decimal_to_amount($response['tax']['amount_to_collect'], $currency_code),
-      'currency_code' => $currency_code,
-      'data' => array(),
-    );
-
-    commerce_taxjar_set_price_component($line_item_wrapper, $tax_price);
-
-    // Save serialized api result to field.
-    $line_item_wrapper->taxjar_details = serialize($response['tax']);
-
-    $line_item_wrapper->save();
+  if ($request['to_country'] == 'US' && db_query('SELECT n.country, n.region FROM {commerce_taxjar_nexus_regions} n WHERE n.country_code = :country AND n.region_code = :region', array(':country' => $request['to_country'], ':region' => $request['to_state']))->rowCount() != 0) {
+    $response = commerce_taxjar_post('taxes', $request);
   }
   else {
-    drupal_set_message(t('Sales tax could not be calculated - please check recent log messages for more detail.'), 'error');
-    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+    $response = array(
+      'tax' => array(
+        'amount_to_collect' => 0,
+      ),
+    );
   }
+
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+
+  $tax_price = array(
+    'amount' => commerce_currency_decimal_to_amount($response['tax']['amount_to_collect'], $currency_code),
+    'currency_code' => $currency_code,
+    'data' => array(),
+  );
+
+  commerce_taxjar_set_price_component($line_item_wrapper, $tax_price);
+
+  // Save serialized api result to field.
+  $line_item_wrapper->taxjar_details = serialize($response['tax']);
+
+  $line_item_wrapper->save();
 }
 
 /**
@@ -431,8 +435,9 @@ function commerce_taxjar_delete($endpoint) {
  * discounts.
  */
 function commerce_taxjar_commerce_cart_order_refresh($order_wrapper) {
-  // Skip the request if there are no line items.
-  if ($order_wrapper->commerce_line_items->count() === 0) {
+  // Skip the request if tax calculation is disabled,
+  // or if there are no line items.
+  if (variable_get('commerce_taxjar_enable_calculation', 1) === 0 || $order_wrapper->commerce_line_items->count() === 0) {
     return;
   }
 
@@ -693,19 +698,28 @@ function commerce_taxjar_calculate_tax(EntityDrupalWrapper $order_wrapper) {
     return FALSE;
   }
 
-  $response = commerce_taxjar_post('taxes', $request);
+  if ($request['to_country'] == 'US' && db_query('SELECT n.country, n.region FROM {commerce_taxjar_nexus_regions} n WHERE n.country_code = :country AND n.region_code = :region', array(':country' => $request['to_country'], ':region' => $request['to_state']))->rowCount() != 0) {
+    $response = commerce_taxjar_post('taxes', $request);
 
-  if (empty($response['tax']) || !isset($response['tax']['amount_to_collect'])) {
-    // Delete the Tax line item if present.
-    commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
-    return FALSE;
+    if (empty($response['tax']) || !isset($response['tax']['amount_to_collect'])) {
+      // Delete the Tax line item if present.
+      commerce_taxjar_delete_tax_line_items($order_wrapper, TRUE);
+      return FALSE;
+    }
+
+    // Store the request & the response in the order's data.
+    $order->data['commerce_taxjar'] = array(
+      'request' => $request,
+      'response' => $response,
+    );
   }
-
-  // Store the request & the response in the order's data.
-  $order->data['commerce_taxjar'] = array(
-    'request' => $request,
-    'response' => $response,
-  );
+  else {
+    $response = array(
+      'tax' => array(
+        'amount_to_collect' => 0,
+      ),
+    );
+  }
 
   // Parse the response.
   $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
@@ -778,7 +792,7 @@ function commerce_taxjar_order_refund($order) {
   $request['transaction_id'] = $request['transaction_id'] . '-refund';
   // Check if a refund for this order already exists.
   $refund = commerce_taxjar_get('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
-  if (!empty($refund)) {
+  if (empty($refund['error'])) {
     // Update the existing refund if necessary.
     $original_wrapper = entity_metadata_wrapper('commerce_order', $order->original);
     $original_request = commerce_taxjar_create_transaction_request($original_wrapper);
@@ -801,7 +815,7 @@ function commerce_taxjar_order_delete($order) {
   $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
   // If a refund exists for this order, delete it as well.
   $refund = commerce_taxjar_get('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
-  if (!empty($refund)) {
+  if (empty($refund['error'])) {
     commerce_taxjar_delete('transactions/refunds/' . $order_wrapper->getIdentifier() . '-refund');
   }
   commerce_taxjar_delete('transactions/orders/' . $order_wrapper->getIdentifier());

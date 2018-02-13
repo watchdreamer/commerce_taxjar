@@ -81,34 +81,6 @@ function commerce_taxjar_default_rules_configuration() {
       }
     }');
 
-  $rules['commerce_taxjar_delete_order_on_tax_line_item_delete'] = rules_import(
-    '{ "commerce_taxjar_delete_order_on_tax_line_item_delete" : {
-      "LABEL" : "Delete order from TaxJar when tax line item is deleted",
-      "PLUGIN" : "reaction rule",
-      "TAGS" : [ "Commerce TaxJar" ],
-      "REQUIRES" : [ "commerce_taxjar", "entity" ],
-      "ON" : { "commerce_order_update" : [] },
-      "IF" : [
-        { "NOT commerce_order_contains_taxjar_line_item" : { "commerce_order" : [ "commerce_order" ] } },
-        { "data_is" : {
-              "data" : [ "commerce-order:status" ],
-              "op" : "IN",
-              "value" : { "value" : {
-                  "canceled" : "canceled",
-                  "pending" : "pending",
-                  "processing" : "processing",
-                  "completed" : "completed"
-                }
-              }
-            }
-          }
-      ],
-      "DO" : [
-        { "commerce_taxjar_order_delete" : { "commerce_order" : [ "commerce_order" ] } }
-      ]
-    }
-  }');
-
   $rules['commerce_taxjar_override_tax_address_for_non_shipped_orders'] = rules_import(
     '{ "commerce_taxjar_override_tax_address_for_non_shipped_orders" : {
       "LABEL" : "Override address used for tax calulation on orders with no physically shipped items",
