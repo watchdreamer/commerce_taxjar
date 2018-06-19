@@ -1,9 +1,15 @@
 commerce_tax.commerce_tax_type.plugin.taxjar:
   type: commerce_tax_type_configuration
   mapping:
+    api_mode:
+      type: string
+      label: 'API mode'
     api_key:
       type: string
-      label: 'API Token'
+      label: 'API token'
+    sandbox_key:
+      type: string
+      label: 'Sandbox token'
     enable_calculation:
       type: boolean
       label: 'Enable sales tax calculation with TaxJar'
