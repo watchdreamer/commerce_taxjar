@@ -1,0 +1,4 @@
+services:
+  commerce_taxjar.client_factory:
+    class: Drupal\commerce_taxjar\ClientFactory
+    arguments: ['@http_client_factory']
