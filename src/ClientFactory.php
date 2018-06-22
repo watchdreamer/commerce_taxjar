@@ -2,7 +2,6 @@
 
 namespace Drupal\commerce_taxjar;
 
-use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Http\ClientFactory as CoreClientFactory;
 
 /**
@@ -15,12 +14,10 @@ class ClientFactory {
   /**
    * Constructs a new TaxJar ClientFactory object.
    *
-   * @param \Drupal\Core\Config\ConfigFactoryInterface $config_factory
-   *   The config factory.
    * @param \Drupal\Core\Http\ClientFactory $client_factory
    *   The client factory.
    */
-  public function __construct(ConfigFactoryInterface $config_factory, CoreClientFactory $client_factory) {
+  public function __construct(CoreClientFactory $client_factory) {
     $this->clientFactory = $client_factory;
   }
 
