@@ -31,5 +31,30 @@ function commerce_taxjar_entity_base_field_info(EntityTypeInterface $entity_type
     return $fields;
   }
 
+  if ($entity_type->id() === 'commerce_product_variation') {
+
+    $fields['taxjar_category_code'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel(t('TaxJar Category Code'))
+      ->setDescription(t('Tax code for the product'))
+      ->setSetting('target_type', 'taxonomy_term')
+      ->setSetting('handler', 'default:taxonomy_term')
+      ->setSetting('handler_settings', [
+        'target_bundles' => ['taxjar_categories'],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayConfigurable('view', TRUE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 5,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'autocomplete_type' => 'tags',
+          'placeholder' => '',
+        ],
+      ]);
+    return $fields;
+  }
+
   return [];
 }
