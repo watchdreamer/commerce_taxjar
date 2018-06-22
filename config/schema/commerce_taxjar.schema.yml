@@ -16,6 +16,3 @@ commerce_tax.commerce_tax_type.plugin.taxjar:
     enable_reporting:
       type: boolean
       label: 'Enable sales tax reporting with TaxJar'
-    address_mode:
-      type: string
-      label: 'Ship from address mode'
