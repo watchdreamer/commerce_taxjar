@@ -97,6 +97,7 @@ class TaxJar extends RemoteTaxTypeBase {
    */
   public function defaultConfiguration() {
     return [
+      'display_inclusive' => FALSE,
       'api_key' => '',
       'sandbox_key' => '',
       'api_mode' => 'production',
