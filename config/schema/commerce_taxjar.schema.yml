@@ -10,9 +10,6 @@ commerce_tax.commerce_tax_type.plugin.taxjar:
     sandbox_key:
       type: string
       label: 'Sandbox token'
-    enable_calculation:
-      type: boolean
-      label: 'Enable sales tax calculation with TaxJar'
     enable_reporting:
       type: boolean
       label: 'Enable sales tax reporting with TaxJar'

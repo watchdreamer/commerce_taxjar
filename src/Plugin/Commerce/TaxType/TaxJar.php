@@ -100,7 +100,6 @@ class TaxJar extends RemoteTaxTypeBase {
       'api_key' => '',
       'sandbox_key' => '',
       'api_mode' => 'development',
-      'enable_calculation' => TRUE,
       'enable_reporting' => TRUE,
     ] + parent::defaultConfiguration();
   }
