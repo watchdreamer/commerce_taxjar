@@ -110,6 +110,49 @@ class TaxJar extends RemoteTaxTypeBase {
    */
   public function buildConfigurationForm(array $form, FormStateInterface $form_state) {
     $form = parent::buildConfigurationForm($form, $form_state);
+
+    $form['api_mode'] = [
+      '#type' => 'radios',
+      '#title' => $this->t('API mode:'),
+      '#default_value' => $this->configuration['api_mode'],
+      '#options' => [
+        'production' => $this->t('Production'),
+        'sandbox' => $this->t('Sandbox'),
+      ],
+      '#required' => TRUE,
+      '#description' => $this->t('The mode to use when calculating taxes. Note: Sandbox mode is only available with TaxJar Plus.'),
+    ];
+
+    $form['api_key'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('API Token'),
+      '#default_value' => $this->configuration['api_key'],
+      '#required' => TRUE,
+      '#description' => $this->t('Enter your TaxJar API token. If you do not have a token, <a href="@login" target="_blank">login</a> and go to Account > API Access to generate a new one.', array('@login' => 'https://app.taxjar.com')),
+    ];
+
+    $form['sandbox_key'] = [
+      '#type' => 'textfield',
+      '#title' => $this->t('Sandbox API Token'),
+      '#default_value' => $this->configuration['sandbox_key'],
+      '#description' => $this->t('Enter your sandbox API token for testing.'),
+      '#states' => [
+        'visible' => [
+          ':input[name="configuration[taxjar][api_mode]"]' => ['value' => 'sandbox'],
+        ],
+        'required' => [
+          ':input[name="configuration[taxjar][api_mode]"]' => ['value' => 'sandbox'],
+        ],
+      ],
+    ];
+
+    $form['enable_reporting'] = [
+      '#type' => 'checkbox',
+      '#title' => t('Use TaxJar for sales tax reporting'),
+      '#description' => t('Record order transactions to TaxJar for automated reporting / filing.'),
+      '#default_value' => $this->configuration['enable_reporting'],
+    ];
+
     return $form;
   }
 
@@ -125,6 +168,11 @@ class TaxJar extends RemoteTaxTypeBase {
    */
   public function submitConfigurationForm(array &$form, FormStateInterface $form_state) {
     parent::submitConfigurationForm($form, $form_state);
+    $values = $form_state->getValue($form['#parents']);
+    $this->configuration['api_mode'] = $values['api_mode'];
+    $this->configuration['api_key'] = $values['api_key'];
+    $this->configuration['sandbox_key'] = $values['sandbox_key'];
+    $this->configuration['enable_reporting'] = (bool) $values['enable_reporting'];
   }
 
   /**
