@@ -33,13 +33,13 @@ class ClientFactory {
   public function createInstance(array $config) {
     switch ($config['api_mode']) {
       case 'production':
-        $base_uri = 'https://api.taxjar.com/';
+        $base_uri = 'https://api.taxjar.com/v2/';
         $token = $config['api_key'];
         break;
 
       case 'development':
       default:
-        $base_uri = 'https://api.sandbox.taxjar.com/';
+        $base_uri = 'https://api.sandbox.taxjar.com/v2/';
         $token = $config['sandbox_key'];
         break;
     }
