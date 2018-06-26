@@ -172,6 +172,116 @@ class TaxJar extends RemoteTaxTypeBase {
    * {@inheritdoc}
    */
   public function apply(OrderInterface $order) {
+    $request_body = [
+      'plugin' => 'drupal-commerce',
+      'shipping' => 0,
+      'line_items' => [],
+    ];
+
+    $store = $order->getStore();
+
+    if ($store->taxjar_address_mode->value === 'store') {
+      $address = $store->getAddress();
+      $request_body['from_country'] = $address->getCountryCode();
+      $request_body['from_zip'] = $address->getPostalCode();
+      $request_body['from_state'] = $address->getAdministrativeArea();
+      $request_body['from_city'] = $address->getLocality();
+      $request_body['from_street'] = $address->getAddressLine1();
+      // Concatenate street line 2 if supplied.
+      if (!empty($address->getAddressLine2())) {
+        $request_body['from_street'] .= ' ' . $address->getAddressLine2();
+      }
+    }
+
+    foreach ($order->getItems() as $item) {
+      $profile = $this->resolveCustomerProfile($item);
+
+      if (!$profile) {
+        return;
+      }
+
+      $address = $profile->get('address')->first();
+      $request_body['to_country'] = $address->getCountryCode();
+      $request_body['to_zip'] = $address->getPostalCode();
+      $request_body['to_state'] = $address->getAdministrativeArea();
+      $request_body['to_city'] = $address->getLocality();
+      $request_body['to_street'] = $address->getAddressLine1();
+      // Concatenate street line 2 if supplied.
+      if (!empty($address->getAddressLine2())) {
+        $request_body['to_street'] .= ' ' . $address->getAddressLine2();
+      }
+
+      $line_item = [
+        'id' => $item->id(),
+        'quantity' => $item->getQuantity(),
+        'unit_price' => $item->getUnitPrice()->getNumber(),
+      ];
+
+      if ($term = $item->getPurchasedEntity()->taxjar_category_code->entity) {
+        $line_item['product_tax_code'] = $term->taxjar_category_code->value;
+      }
+
+      $discount = 0;
+
+      foreach ($item->getAdjustments() as $adjustment) {
+        if ($adjustment->getType() === 'promotion') {
+          $discount = $discount - $adjustment->getAmount()->getNumber();
+        }
+      }
+
+      if ($discount !== 0) {
+        $line_item['discount'] = $discount;
+      }
+
+      $request_body['line_items'][] = $line_item;
+    }
+
+    $adjustments = $order->getAdjustments();
+
+    foreach ($adjustments as $adjustment) {
+      if ($adjustment->getType() === 'shipping') {
+        $request_body['shipping'] += $adjustment->getAmount()->getNumber();
+      }
+    }
+
+    try {
+      $response = $this->client->post('taxes', [
+        'json' => $request_body,
+      ]);
+
+      $response_body = Json::decode($response->getBody()->getContents());
+
+      $items_tax = [];
+      foreach ($response_body['tax']['breakdown']['line_items'] as $item) {
+        $items_tax[$item['id']] = $item['tax_collectable'];
+      }
+
+      $currency_code = $order->getTotalPrice() ? $order->getTotalPrice()->getCurrencyCode() : $store->getDefaultCurrencyCode();
+
+      foreach ($order->getItems() as $item) {
+        if (isset($items_tax[$item->id()])) {
+          $item->addAdjustment(new Adjustment([
+            'type' => 'tax',
+            'label' => 'Sales tax',
+            'amount' => new Price((string) $items_tax[$item->id()], $currency_code),
+            'source_id' => $this->pluginId . '|' . $this->entityId,
+          ]));
+        }
+      }
+
+      // Store the TaxJar data in the order.
+      $order->setData($this->pluginId . '|' . $this->entityId, [
+        'request' => $request_body,
+        'response' => $response_body,
+      ]);
+    }
+    catch (ClientException $e) {
+      $this->logger->error($e->getResponse()->getBody()->getContents());
+    }
+    catch (\Exception $e) {
+      $this->logger->error($e->getMessage());
+    }
+
   }
 
   /**
