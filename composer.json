@@ -11,6 +11,6 @@
     "source": "http://cgit.drupalcode.org/commerce_taxjar"
   },
   "require": {
-    "drupal/commerce": "~2.0"
+    "drupal/commerce": "^2.8"
   }
 }
