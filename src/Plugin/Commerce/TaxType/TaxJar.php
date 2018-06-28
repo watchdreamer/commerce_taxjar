@@ -248,7 +248,7 @@ class TaxJar extends RemoteTaxTypeBase {
     $request['transaction_reference_id'] = $request['transaction_id'];
     $request['transaction_id'] .= '-refund';
 
-    $request['amount'] = $amount;
+    $request['amount'] = $amount - $request['sales_tax'];
 
     $refund_exists = TRUE;
 
