@@ -340,94 +340,82 @@ class TaxJar extends RemoteTaxTypeBase {
    */
   public function buildRequest(OrderInterface $order, $mode = 'quote') {
 
-    $request_body = [];
+    $request_body = [
+      'plugin' => 'drupal-commerce',
+      'shipping' => 0,
+      'line_items' => [],
+    ];
 
-    if ($mode === 'quote') {
+    $store = $order->getStore();
 
-      $request_body = [
-        'plugin' => 'drupal-commerce',
-        'shipping' => 0,
-        'line_items' => [],
-      ];
-
-      $store = $order->getStore();
-
-      if ($store->taxjar_address_mode->value === 'store') {
-        $address = $store->getAddress();
-        $request_body['from_country'] = $address->getCountryCode();
-        $request_body['from_zip'] = $address->getPostalCode();
-        $request_body['from_state'] = $address->getAdministrativeArea();
-        $request_body['from_city'] = $address->getLocality();
-        $request_body['from_street'] = $address->getAddressLine1();
-        // Concatenate street line 2 if supplied.
-        if (!empty($address->getAddressLine2())) {
-          $request_body['from_street'] .= ' ' . $address->getAddressLine2();
-        }
+    if ($store->taxjar_address_mode->value === 'store') {
+      $address = $store->getAddress();
+      $request_body['from_country'] = $address->getCountryCode();
+      $request_body['from_zip'] = $address->getPostalCode();
+      $request_body['from_state'] = $address->getAdministrativeArea();
+      $request_body['from_city'] = $address->getLocality();
+      $request_body['from_street'] = $address->getAddressLine1();
+      // Concatenate street line 2 if supplied.
+      if (!empty($address->getAddressLine2())) {
+        $request_body['from_street'] .= ' ' . $address->getAddressLine2();
       }
-
-      foreach ($order->getItems() as $item) {
-        $profile = $this->resolveCustomerProfile($item);
-
-        if (!$profile) {
-          return;
-        }
-
-        $address = $profile->get('address')->first();
-        $request_body['to_country'] = $address->getCountryCode();
-        $request_body['to_zip'] = $address->getPostalCode();
-        $request_body['to_state'] = $address->getAdministrativeArea();
-        $request_body['to_city'] = $address->getLocality();
-        $request_body['to_street'] = $address->getAddressLine1();
-        // Concatenate street line 2 if supplied.
-        if (!empty($address->getAddressLine2())) {
-          $request_body['to_street'] .= ' ' . $address->getAddressLine2();
-        }
-
-        $line_item = [
-          'id' => $item->id(),
-          'quantity' => $item->getQuantity(),
-          'unit_price' => $item->getUnitPrice()->getNumber(),
-        ];
-
-        if ($term = $item->getPurchasedEntity()->taxjar_category_code->entity) {
-          $line_item['product_tax_code'] = $term->taxjar_category_code->value;
-        }
-
-        $discount = 0;
-
-        foreach ($item->getAdjustments() as $adjustment) {
-          if ($adjustment->getType() === 'promotion') {
-            $discount = $discount - $adjustment->getAmount()->getNumber();
-          }
-        }
-
-        if ($discount !== 0) {
-          $line_item['discount'] = $discount;
-        }
-
-        $request_body['line_items'][] = $line_item;
-      }
-
-      $adjustments = $order->getAdjustments();
-
-      foreach ($adjustments as $adjustment) {
-        if ($adjustment->getType() === 'shipping') {
-          $request_body['shipping'] += $adjustment->getAmount()->getNumber();
-        }
-      }
-
-      // Let other modules alter the request.
-      $this->moduleHandler->alter('commerce_taxjar_tax_request', $request_body, $order);
     }
 
-    elseif ($mode === 'transaction') {
-      $taxjar_data = $order->getData('taxjar');
+    foreach ($order->getItems() as $item) {
+      $profile = $this->resolveCustomerProfile($item);
 
-      if (empty($taxjar_data)) {
+      if (!$profile) {
         return;
       }
 
-      $request_body = $taxjar_data['request'];
+      $address = $profile->get('address')->first();
+      $request_body['to_country'] = $address->getCountryCode();
+      $request_body['to_zip'] = $address->getPostalCode();
+      $request_body['to_state'] = $address->getAdministrativeArea();
+      $request_body['to_city'] = $address->getLocality();
+      $request_body['to_street'] = $address->getAddressLine1();
+      // Concatenate street line 2 if supplied.
+      if (!empty($address->getAddressLine2())) {
+        $request_body['to_street'] .= ' ' . $address->getAddressLine2();
+      }
+
+      $line_item = [
+        'id' => $item->id(),
+        'quantity' => $item->getQuantity(),
+        'unit_price' => $item->getUnitPrice()->getNumber(),
+      ];
+
+      if ($term = $item->getPurchasedEntity()->taxjar_category_code->entity) {
+        $line_item['product_tax_code'] = $term->taxjar_category_code->value;
+      }
+
+      $discount = 0;
+
+      foreach ($item->getAdjustments() as $adjustment) {
+        if ($adjustment->getType() === 'promotion') {
+          $discount = $discount - $adjustment->getAmount()->getNumber();
+        }
+      }
+
+      if ($discount !== 0) {
+        $line_item['discount'] = $discount;
+      }
+
+      $request_body['line_items'][] = $line_item;
+    }
+
+    $adjustments = $order->getAdjustments();
+
+    foreach ($adjustments as $adjustment) {
+      if ($adjustment->getType() === 'shipping') {
+        $request_body['shipping'] += $adjustment->getAmount()->getNumber();
+      }
+    }
+
+    // Let other modules alter the request.
+    $this->moduleHandler->alter('commerce_taxjar_tax_request', $request_body, $order);
+
+    if ($mode === 'transaction') {
       unset($request_body['plugin']);
       $request_body['transaction_id'] = $order->getOrderNumber();
       $request_body['transaction_date'] = DrupalDateTime::createFromTimestamp($order->getPlacedTime())->format('Y-m-d');
