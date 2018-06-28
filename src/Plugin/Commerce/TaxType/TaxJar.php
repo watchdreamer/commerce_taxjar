@@ -391,24 +391,30 @@ class TaxJar extends RemoteTaxTypeBase {
       }
     }
 
-    foreach ($order->getItems() as $item) {
-      $profile = $this->resolveCustomerProfile($item);
+    $order_line_items = $order->getItems();
 
-      if (!$profile) {
-        return;
+    // Add to address.
+    foreach ($order_line_items as $item) {
+      if (!empty($item->getOrder())) {
+        $profile = $this->resolveCustomerProfile($item);
+        if (!empty($profile)) {
+          $address = $profile->get('address')->first();
+          $request_body['to_country'] = $address->getCountryCode();
+          $request_body['to_zip'] = $address->getPostalCode();
+          $request_body['to_state'] = $address->getAdministrativeArea();
+          $request_body['to_city'] = $address->getLocality();
+          $request_body['to_street'] = $address->getAddressLine1();
+          // Concatenate street line 2 if supplied.
+          if (!empty($address->getAddressLine2())) {
+            $request_body['to_street'] .= ' ' . $address->getAddressLine2();
+          }
+          break;
+        }
       }
+    }
 
-      $address = $profile->get('address')->first();
-      $request_body['to_country'] = $address->getCountryCode();
-      $request_body['to_zip'] = $address->getPostalCode();
-      $request_body['to_state'] = $address->getAdministrativeArea();
-      $request_body['to_city'] = $address->getLocality();
-      $request_body['to_street'] = $address->getAddressLine1();
-      // Concatenate street line 2 if supplied.
-      if (!empty($address->getAddressLine2())) {
-        $request_body['to_street'] .= ' ' . $address->getAddressLine2();
-      }
-
+    // Add line items.
+    foreach ($order_line_items as $item) {
       $line_item = [
         'id' => $item->id(),
         'quantity' => $item->getQuantity(),
@@ -456,9 +462,8 @@ class TaxJar extends RemoteTaxTypeBase {
         $line_items[$item['id']] = $item;
       }
 
-      $order_line_items = $this->entityTypeManager->getStorage('commerce_order_item')->loadMultiple(array_keys($line_items));
-
-      foreach ($order_line_items as $id => $line_item) {
+      foreach ($order_line_items as $line_item) {
+        $id = $line_item->id();
         $adjustment_amount = 0;
         $adjustments = $line_item->getAdjustments();
         foreach ($adjustments as $adjustment) {
