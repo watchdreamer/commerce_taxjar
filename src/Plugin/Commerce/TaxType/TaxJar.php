@@ -240,6 +240,60 @@ class TaxJar extends RemoteTaxTypeBase {
   }
 
   /**
+   * Make refund transaction request to API.
+   */
+  public function refundTransaction(OrderInterface $order, string $amount) {
+    $request = $this->buildRequest($order, 'transaction');
+
+    $request['transaction_reference_id'] = $request['transaction_id'];
+    $request['transaction_id'] .= '-refund';
+
+    $request['amount'] = $amount;
+
+    $refund_exists = TRUE;
+
+    // Check for existing refund transaction.
+    try {
+      $response = $this->client->get('transactions/refunds/' . $request['transaction_id']);
+    }
+    catch (ClientException $e) {
+      if ($e->getResponse()->getStatusCode() == 404) {
+        $refund_exists = FALSE;
+      }
+    }
+
+    if ($refund_exists) {
+      // Update existing refund transaction.
+      try {
+        $response = $this->client->put('transactions/refunds/' . $request['transaction_id'], [
+          'json' => $request,
+        ]);
+      }
+      catch (ClientException $e) {
+        $this->logger->error($e->getResponse()->getBody()->getContents());
+      }
+      catch (\Exception $e) {
+        $this->logger->error($e->getMessage());
+      }
+    }
+    else {
+      // Create new refund transaction.
+      try {
+        $response = $this->client->post('transactions/refunds', [
+          'json' => $request,
+        ]);
+      }
+      catch (ClientException $e) {
+        $this->logger->error($e->getResponse()->getBody()->getContents());
+      }
+      catch (\Exception $e) {
+        $this->logger->error($e->getMessage());
+      }
+    }
+
+  }
+
+  /**
    * Build request.
    */
   public function buildRequest(OrderInterface $order, $mode = 'quote') {

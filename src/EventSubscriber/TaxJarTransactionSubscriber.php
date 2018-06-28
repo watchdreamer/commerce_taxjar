@@ -34,6 +34,8 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
   public static function getSubscribedEvents() {
     $events = [
       'commerce_order.place.post_transition' => ['saveTransaction'],
+      'commerce_payment.partially_refund.post_transition' => ['refundTransaction'],
+      'commerce_payment.refund.post_transition' => ['refundTransaction']
     ];
     return $events;
   }
@@ -55,6 +57,29 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
 
       if ($plugin->getConfiguration()['enable_reporting']) {
         $plugin->createTransaction($order);
+      }
+    }
+  }
+
+  /**
+   * Refunds a transaction in TaxJar.
+   *
+   * @param \Drupal\state_machine\Event\WorkflowTransitionEvent $event
+   *   The workflow transition event.
+   */
+  public function refundTransaction(WorkflowTransitionEvent $event) {
+    $payment = $event->getEntity();
+    $order = $payment->getOrder();
+    $amount = $payment->getRefundedAmount()->getNumber();
+
+    $taxjar_data = $order->getData('taxjar');
+
+    if (!empty($taxjar_data)) {
+      $tax_type = $this->entityTypeManager->getStorage('commerce_tax_type')->load($taxjar_data['plugin_id']);
+      $plugin = $tax_type->getPlugin();
+
+      if ($plugin->getConfiguration()['enable_reporting']) {
+        $plugin->refundTransaction($order, $amount);
       }
     }
   }
