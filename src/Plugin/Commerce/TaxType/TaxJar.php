@@ -244,6 +244,33 @@ class TaxJar extends RemoteTaxTypeBase {
   }
 
   /**
+   * Make transaction update request to API.
+   */
+  public function updateTransaction(OrderInterface $order) {
+    $request = $this->buildRequest($order, 'transaction');
+    $order_data = $order->getData($this->pluginId);
+    $old_request = empty($order_data['transactionRequest']) ? [] : $order_data['transactionRequest'];
+
+    // only make request if the order has changed
+    if ($request != $old_request) {
+      try {
+        $response = $this->client->put('transactions/orders/' . $order->getOrderNumber(), [
+          'json' => $request,
+        ]);
+
+        $order_data['transactionRequest'] = $request;
+        $order->setData($this->pluginId, $order_data);
+      }
+      catch (ClientException $e) {
+        $this->logger->error($e->getResponse()->getBody()->getContents());
+      }
+      catch (\Exception $e) {
+        $this->logger->error($e->getMessage());
+      }
+    }
+  }
+
+  /**
    * Make refund transaction request to API.
    */
   public function refundTransaction(OrderInterface $order, string $amount) {
@@ -294,7 +321,6 @@ class TaxJar extends RemoteTaxTypeBase {
         $this->logger->error($e->getMessage());
       }
     }
-
   }
 
   /**
