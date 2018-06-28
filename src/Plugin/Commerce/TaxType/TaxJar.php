@@ -413,6 +413,11 @@ class TaxJar extends RemoteTaxTypeBase {
       }
     }
 
+    // Stop here if a 'to' address could not be obtained
+    if (empty($request_body['to_country'])) {
+      return;
+    }
+
     // Add line items.
     foreach ($order_line_items as $item) {
       $line_item = [
