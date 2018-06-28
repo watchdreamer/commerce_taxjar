@@ -180,11 +180,18 @@ class TaxJar extends RemoteTaxTypeBase {
     }
 
     try {
-      $response = $this->client->post('taxes', [
-        'json' => $request_body,
-      ]);
+      // If identical request has already been made, reuse it.
+      $order_data = $order->getData($this->pluginId);
+      if (!empty($order_data['request']) && !empty($order_data['response']) && $order_data['request'] == $request_body) {
+        $response_body = $order_data['response'];
+      }
+      else {
+        $response = $this->client->post('taxes', [
+          'json' => $request_body,
+        ]);
 
-      $response_body = Json::decode($response->getBody()->getContents());
+        $response_body = Json::decode($response->getBody()->getContents());
+      }
 
       $items_tax = [];
       foreach ($response_body['tax']['breakdown']['line_items'] as $item) {
