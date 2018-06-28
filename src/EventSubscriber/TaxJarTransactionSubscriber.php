@@ -3,6 +3,7 @@
 namespace Drupal\commerce_taxjar\EventSubscriber;
 
 use Drupal\commerce_order\Adjustment;
+use Drupal\commerce_order\Event\OrderEvent;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\state_machine\Event\WorkflowTransitionEvent;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
@@ -34,7 +35,8 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
   public static function getSubscribedEvents() {
     $events = [
       'commerce_order.place.post_transition' => ['saveTransaction'],
-      'commerce_payment.refund.post_transition' => ['refundTransaction']
+      'commerce_payment.refund.post_transition' => ['refundTransaction'],
+      'commerce_order.commerce_order.delete' => ['deleteTransaction']
     ];
     return $events;
   }
@@ -79,6 +81,27 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
 
       if ($plugin->getConfiguration()['enable_reporting']) {
         $plugin->refundTransaction($order, $amount);
+      }
+    }
+  }
+
+  /**
+   * Deletes a transaction in TaxJar.
+   *
+   * @param \Drupal\commerce_order\Event\OrderEvent $event
+   *   The order delete event.
+   */
+  public function deleteTransaction(OrderEvent $event) {
+    $order = $event->getOrder();
+
+    $taxjar_data = $order->getData('taxjar');
+
+    if (!empty($taxjar_data)) {
+      $tax_type = $this->entityTypeManager->getStorage('commerce_tax_type')->load($taxjar_data['plugin_id']);
+      $plugin = $tax_type->getPlugin();
+
+      if ($plugin->getConfiguration()['enable_reporting']) {
+        $plugin->deleteTransaction($order);
       }
     }
   }

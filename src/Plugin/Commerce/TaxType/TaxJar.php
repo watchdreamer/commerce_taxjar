@@ -294,6 +294,48 @@ class TaxJar extends RemoteTaxTypeBase {
   }
 
   /**
+   * Make transaction delete request to API.
+   */
+  public function deleteTransaction(OrderInterface $order) {
+
+    $refund_exists = TRUE;
+
+    // Check for corresponding refund transaction.
+    try {
+      $response = $this->client->get('transactions/refunds/' . $order->getOrderNumber() . '-refund');
+    }
+    catch (ClientException $e) {
+      if ($e->getResponse()->getStatusCode() == 404) {
+        $refund_exists = FALSE;
+      }
+    }
+
+    // Delete refund if it exists.
+    if ($refund_exists) {
+      try {
+        $response = $this->client->delete('transactions/refunds/' . $order->getOrderNumber() . '-refund');
+      }
+      catch (ClientException $e) {
+        $this->logger->error($e->getResponse()->getBody()->getContents());
+      }
+      catch (\Exception $e) {
+        $this->logger->error($e->getMessage());
+      }
+    }
+
+    // Delete order.
+    try {
+      $response = $this->client->delete('transactions/orders/' . $order->getOrderNumber());
+    }
+    catch (ClientException $e) {
+      $this->logger->error($e->getResponse()->getBody()->getContents());
+    }
+    catch (\Exception $e) {
+      $this->logger->error($e->getMessage());
+    }
+  }
+
+  /**
    * Build request.
    */
   public function buildRequest(OrderInterface $order, $mode = 'quote') {
