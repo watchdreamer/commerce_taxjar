@@ -34,7 +34,6 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
   public static function getSubscribedEvents() {
     $events = [
       'commerce_order.place.post_transition' => ['saveTransaction'],
-      'commerce_payment.partially_refund.post_transition' => ['refundTransaction'],
       'commerce_payment.refund.post_transition' => ['refundTransaction']
     ];
     return $events;
