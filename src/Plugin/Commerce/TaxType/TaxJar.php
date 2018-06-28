@@ -230,6 +230,10 @@ class TaxJar extends RemoteTaxTypeBase {
       $response = $this->client->post('transactions/orders', [
         'json' => $request,
       ]);
+
+      $data = $order->getData($this->pluginId);
+      $data['transactionRequest'] = $request;
+      $order->setData($this->pluginId, $data);
     }
     catch (ClientException $e) {
       $this->logger->error($e->getResponse()->getBody()->getContents());
