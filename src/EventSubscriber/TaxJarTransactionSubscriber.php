@@ -34,7 +34,7 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
    */
   public static function getSubscribedEvents() {
     $events = [
-      'commerce_order.place.post_transition' => ['saveTransaction'],
+      'commerce_order.commerce_order.presave' => ['updateTransaction'],
       'commerce_payment.refund.post_transition' => ['refundTransaction'],
       'commerce_order.commerce_order.delete' => ['deleteTransaction']
     ];
@@ -42,13 +42,13 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
   }
 
   /**
-   * Saves a transaction to TaxJar.
+   * Creates / updates a transaction in TaxJar.
    *
-   * @param \Drupal\state_machine\Event\WorkflowTransitionEvent $event
-   *   The workflow transition event.
+   * @param \Drupal\commerce_order\Event\OrderEvent $event
+   *   The order update event.
    */
-  public function saveTransaction(WorkflowTransitionEvent $event) {
-    $order = $event->getEntity();
+  public function updateTransaction(OrderEvent $event) {
+    $order = $event->getOrder();
 
     $taxjar_data = $order->getData('taxjar');
 
@@ -56,8 +56,17 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
       $tax_type = $this->entityTypeManager->getStorage('commerce_tax_type')->load($taxjar_data['plugin_id']);
       $plugin = $tax_type->getPlugin();
 
-      if ($plugin->getConfiguration()['enable_reporting']) {
-        $plugin->createTransaction($order);
+      if ($plugin->getConfiguration()['enable_reporting'] && !empty($order->original)) {
+        // Order created.
+        if ($order->original->getState()->value === 'draft' && $order->getState()->value !== 'draft') {
+          $plugin->createTransaction($order);
+        }
+        // Order updated.
+        elseif ($order->original->getState()->value !== 'draft' && $order->getState()->value !== 'draft') {
+          // Manually recalculate total prior to updating the transaction.
+          $order->recalculateTotalPrice();
+          $plugin->updateTransaction($order);
+        }
       }
     }
   }
