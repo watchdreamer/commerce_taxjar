@@ -154,6 +154,19 @@ class TaxJar extends RemoteTaxTypeBase {
       '#default_value' => $this->configuration['enable_reporting'],
     ];
 
+    $categories_found = (bool)\Drupal::entityQuery('taxonomy_term')
+      ->condition('vid', 'taxjar_categories')
+      ->count()
+      ->execute();
+
+    $form['sync_categories'] = [
+      '#type' => 'checkbox',
+      '#title' => t('Sync Product Tax Categories'),
+      '#description' => t('TaxJar supplies certain product categories which are used to tag products that are either exempt from sales tax in some jurisdictions or are taxed at reduced rates. These categories are fetched at the time of module installation, and will typically not require updating. If a new category has been added by TaxJar which you would like to use, check this box and submit the form to fetch any updated categories from the TaxJar service.'),
+      '#default_value' => !$categories_found,
+      '#access' => $categories_found
+    ];
+
     return $form;
   }
 
@@ -167,6 +180,54 @@ class TaxJar extends RemoteTaxTypeBase {
     $this->configuration['api_key'] = $values['api_key'];
     $this->configuration['sandbox_key'] = $values['sandbox_key'];
     $this->configuration['enable_reporting'] = (bool) $values['enable_reporting'];
+
+    if ((bool) $values['sync_categories']) {
+      $this->syncCategories();
+    }
+  }
+
+  /**
+   * Sync TaxJar categories.
+   */
+  public function syncCategories() {
+    try {
+      $response = $this->client->get('categories');
+
+      $categories = Json::decode($response->getBody()->getContents());
+
+      $term_storage = $this->entityTypeManager->getStorage('taxonomy_term');
+
+      $terms = $term_storage->loadByProperties(['vid' => 'taxjar_categories']);
+
+      // Build array of existing categories keyed by TaxJar category code.
+      $existing_terms = [];
+      foreach ($terms as $term) {
+        $existing_terms[$term->taxjar_category_code->value] = $term;
+      }
+
+      // Loop through categories, updating or adding as necessary.
+      foreach ($categories['categories'] as $category) {
+        if (empty($existing_terms[$category['product_tax_code']])) {
+          $term = $term_storage->create([
+            'vid' => 'taxjar_categories',
+          ]);
+        }
+        else {
+          $term = $existing_terms[$category['product_tax_code']];
+        }
+        $term->set('name', $category['name']);
+        $term->set('taxjar_category_code', $category['product_tax_code']);
+        $term->set('description', $category['description']);
+        $term->save();
+      }
+      drupal_set_message(t('TaxJar product categories updated.'));
+    }
+    catch (ClientException $e) {
+      $this->logger->error($e->getResponse()->getBody()->getContents());
+    }
+    catch (\Exception $e) {
+      $this->logger->error($e->getMessage());
+    }
   }
 
   /**
