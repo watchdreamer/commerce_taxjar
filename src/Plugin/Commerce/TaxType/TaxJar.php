@@ -175,11 +175,16 @@ class TaxJar extends RemoteTaxTypeBase {
     parent::submitConfigurationForm($form, $form_state);
     $values = $form_state->getValue($form['#parents']);
     $this->configuration['api_mode'] = $values['api_mode'];
+    $key_added = empty($this->configuration['api_key']) && !empty($values['api_key']);
     $this->configuration['api_key'] = $values['api_key'];
     $this->configuration['sandbox_key'] = $values['sandbox_key'];
     $this->configuration['enable_reporting'] = (bool) $values['enable_reporting'];
 
     if ((bool) $values['sync_categories']) {
+      if ($key_added) {
+        // Get a new client configured with the newly added api token before attempting to sync.
+        $this->client = \Drupal::service('commerce_taxjar.client_factory')->createInstance($this->configuration);
+      }
       $this->syncCategories();
     }
   }
