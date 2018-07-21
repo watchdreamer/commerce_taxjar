@@ -23,7 +23,7 @@ function commerce_taxjar_entity_base_field_info(EntityTypeInterface $entity_type
       ])
       ->setSetting('allowed_values', [
         'on_file' => t('Use address on file with TaxJar'),
-        'store' => t('Use store address')
+        'store' => t('Use store address'),
       ])
       ->setDefaultValue(['store'])
       ->setRequired(TRUE)

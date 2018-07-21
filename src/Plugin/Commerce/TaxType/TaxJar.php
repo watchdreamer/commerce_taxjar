@@ -8,8 +8,6 @@ use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_price\Price;
 use Drupal\commerce_tax\Plugin\Commerce\TaxType\RemoteTaxTypeBase;
 use Drupal\Component\Serialization\Json;
-use Drupal\Component\Utility\Html;
-use Drupal\Component\Utility\NestedArray;
 use Drupal\Core\Datetime\DrupalDateTime;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\Core\Extension\ModuleHandlerInterface;
@@ -129,7 +127,7 @@ class TaxJar extends RemoteTaxTypeBase {
       '#title' => $this->t('API Token'),
       '#default_value' => $this->configuration['api_key'],
       '#required' => TRUE,
-      '#description' => $this->t('Enter your TaxJar API token. If you do not have a token, <a href="@login" target="_blank">login</a> and go to Account > API Access to generate a new one.', array('@login' => 'https://app.taxjar.com')),
+      '#description' => $this->t('Enter your TaxJar API token. If you do not have a token, <a href="@login" target="_blank">login</a> and go to Account > API Access to generate a new one.', ['@login' => 'https://app.taxjar.com']),
     ];
 
     $form['sandbox_key'] = [
@@ -154,7 +152,7 @@ class TaxJar extends RemoteTaxTypeBase {
       '#default_value' => $this->configuration['enable_reporting'],
     ];
 
-    $categories_found = (bool)\Drupal::entityQuery('taxonomy_term')
+    $categories_found = (bool) \Drupal::entityQuery('taxonomy_term')
       ->condition('vid', 'taxjar_categories')
       ->count()
       ->execute();
@@ -164,7 +162,7 @@ class TaxJar extends RemoteTaxTypeBase {
       '#title' => t('Sync Product Tax Categories'),
       '#description' => t('TaxJar supplies certain product categories which are used to tag products that are either exempt from sales tax in some jurisdictions or are taxed at reduced rates. These categories are fetched at the time of module installation, and will typically not require updating. If a new category has been added by TaxJar which you would like to use, check this box and submit the form to fetch any updated categories from the TaxJar service.'),
       '#default_value' => !$categories_found,
-      '#access' => $categories_found
+      '#access' => $categories_found,
     ];
 
     return $form;
@@ -285,7 +283,6 @@ class TaxJar extends RemoteTaxTypeBase {
     catch (\Exception $e) {
       $this->logger->error($e->getMessage());
     }
-
   }
 
   /**
@@ -295,7 +292,7 @@ class TaxJar extends RemoteTaxTypeBase {
     $request = $this->buildRequest($order, 'transaction');
 
     try {
-      $response = $this->client->post('transactions/orders', [
+      $this->client->post('transactions/orders', [
         'json' => $request,
       ]);
 
@@ -319,10 +316,10 @@ class TaxJar extends RemoteTaxTypeBase {
     $order_data = $order->getData($this->pluginId);
     $old_request = empty($order_data['transactionRequest']) ? [] : $order_data['transactionRequest'];
 
-    // only make request if the order has changed
+    // Only make request if the order has changed.
     if ($request != $old_request) {
       try {
-        $response = $this->client->put('transactions/orders/' . $order->getOrderNumber(), [
+        $this->client->put('transactions/orders/' . $order->getOrderNumber(), [
           'json' => $request,
         ]);
 
@@ -353,7 +350,7 @@ class TaxJar extends RemoteTaxTypeBase {
 
     // Check for existing refund transaction.
     try {
-      $response = $this->client->get('transactions/refunds/' . $request['transaction_id']);
+      $this->client->get('transactions/refunds/' . $request['transaction_id']);
     }
     catch (ClientException $e) {
       if ($e->getResponse()->getStatusCode() == 404) {
@@ -364,7 +361,7 @@ class TaxJar extends RemoteTaxTypeBase {
     if ($refund_exists) {
       // Update existing refund transaction.
       try {
-        $response = $this->client->put('transactions/refunds/' . $request['transaction_id'], [
+        $this->client->put('transactions/refunds/' . $request['transaction_id'], [
           'json' => $request,
         ]);
       }
@@ -378,7 +375,7 @@ class TaxJar extends RemoteTaxTypeBase {
     else {
       // Create new refund transaction.
       try {
-        $response = $this->client->post('transactions/refunds', [
+        $this->client->post('transactions/refunds', [
           'json' => $request,
         ]);
       }
@@ -395,12 +392,11 @@ class TaxJar extends RemoteTaxTypeBase {
    * Make transaction delete request to API.
    */
   public function deleteTransaction(OrderInterface $order) {
-
     $refund_exists = TRUE;
 
     // Check for corresponding refund transaction.
     try {
-      $response = $this->client->get('transactions/refunds/' . $order->getOrderNumber() . '-refund');
+      $this->client->get('transactions/refunds/' . $order->getOrderNumber() . '-refund');
     }
     catch (ClientException $e) {
       if ($e->getResponse()->getStatusCode() == 404) {
@@ -411,7 +407,7 @@ class TaxJar extends RemoteTaxTypeBase {
     // Delete refund if it exists.
     if ($refund_exists) {
       try {
-        $response = $this->client->delete('transactions/refunds/' . $order->getOrderNumber() . '-refund');
+        $this->client->delete('transactions/refunds/' . $order->getOrderNumber() . '-refund');
       }
       catch (ClientException $e) {
         $this->logger->error($e->getResponse()->getBody()->getContents());
@@ -423,7 +419,7 @@ class TaxJar extends RemoteTaxTypeBase {
 
     // Delete order.
     try {
-      $response = $this->client->delete('transactions/orders/' . $order->getOrderNumber());
+      $this->client->delete('transactions/orders/' . $order->getOrderNumber());
     }
     catch (ClientException $e) {
       $this->logger->error($e->getResponse()->getBody()->getContents());
@@ -437,7 +433,6 @@ class TaxJar extends RemoteTaxTypeBase {
    * Build request.
    */
   public function buildRequest(OrderInterface $order, $mode = 'quote') {
-
     $request_body = [
       'plugin' => 'drupal-commerce',
       'shipping' => 0,
@@ -481,7 +476,7 @@ class TaxJar extends RemoteTaxTypeBase {
       }
     }
 
-    // Stop here if a 'to' address could not be obtained
+    // Stop here if a 'to' address could not be obtained.
     if (empty($request_body['to_country'])) {
       return;
     }
@@ -574,6 +569,7 @@ class TaxJar extends RemoteTaxTypeBase {
    * Get the API client, configured for this instance.
    *
    * @return \GuzzleHttp\Client
+   *   The httpClient instance.
    */
   public function getClient() {
     return $this->client;

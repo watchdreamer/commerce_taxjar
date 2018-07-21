@@ -2,12 +2,14 @@
 
 namespace Drupal\commerce_taxjar\EventSubscriber;
 
-use Drupal\commerce_order\Adjustment;
 use Drupal\commerce_order\Event\OrderEvent;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
 use Drupal\state_machine\Event\WorkflowTransitionEvent;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
+/**
+ * Event subscriber to handle syncing order data with TaxJar.
+ */
 class TaxJarTransactionSubscriber implements EventSubscriberInterface {
 
   /**
@@ -36,7 +38,7 @@ class TaxJarTransactionSubscriber implements EventSubscriberInterface {
     $events = [
       'commerce_order.commerce_order.presave' => ['updateTransaction'],
       'commerce_payment.refund.post_transition' => ['refundTransaction'],
-      'commerce_order.commerce_order.delete' => ['deleteTransaction']
+      'commerce_order.commerce_order.delete' => ['deleteTransaction'],
     ];
     return $events;
   }
