@@ -259,7 +259,7 @@ class TaxJar extends RemoteTaxTypeBase {
         $items_tax[$item['id']] = $item['tax_collectable'];
       }
 
-      $currency_code = $order->getTotalPrice() ? $order->getTotalPrice()->getCurrencyCode() : $store->getDefaultCurrencyCode();
+      $currency_code = $order->getTotalPrice() ? $order->getTotalPrice()->getCurrencyCode() : $order->getStore()->getDefaultCurrencyCode();
 
       foreach ($order->getItems() as $item) {
         if (isset($items_tax[$item->id()])) {
