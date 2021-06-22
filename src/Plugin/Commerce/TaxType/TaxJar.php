@@ -223,7 +223,7 @@ class TaxJar extends RemoteTaxTypeBase {
         $term->set('description', $category['description']);
         $term->save();
       }
-      drupal_set_message(t('TaxJar product categories updated.'));
+      $this->messenger()->addStatus(t('TaxJar product categories updated.'));
     }
     catch (ClientException $e) {
       $this->logger->error($e->getResponse()->getBody()->getContents());
