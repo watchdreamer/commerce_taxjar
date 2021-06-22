@@ -1,7 +1,7 @@
 name: TaxJar
 description: Drupal Commerce Connector for TaxJar
 type: module
-core: 8.x
+core_version_requirement: ^8.8 || ^9
 configure: commerce_taxjar.config_settings
 dependencies:
   - commerce:commerce (>=8.x-2.8)
