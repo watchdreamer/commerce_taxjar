@@ -4,7 +4,7 @@ type: module
 core_version_requirement: ^8.8 || ^9
 configure: commerce_taxjar.config_settings
 dependencies:
-  - commerce:commerce (>=8.x-2.8)
+  - commerce:commerce
   - commerce:commerce_order
   - commerce:commerce_store
   - commerce:commerce_tax
