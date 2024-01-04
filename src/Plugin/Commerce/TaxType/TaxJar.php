@@ -153,6 +153,7 @@ class TaxJar extends RemoteTaxTypeBase {
     ];
 
     $categories_found = (bool) \Drupal::entityQuery('taxonomy_term')
+      ->accessCheck(FALSE)
       ->condition('vid', 'taxjar_categories')
       ->count()
       ->execute();
@@ -260,26 +261,28 @@ class TaxJar extends RemoteTaxTypeBase {
       $items_tax = [];
       if (!empty($response_body['tax']['breakdown'])) {
         foreach ($response_body['tax']['breakdown']['line_items'] as $item) {
-          $items_tax[$item['id']] = $item['tax_collectable'];
+          $items_tax[$item['id']] = [
+            'amount' => (string) $item['tax_collectable'],
+            'percentage' => (string) $item['combined_tax_rate'],
+          ];
         }
       }
 
       $currency_code = $order->getTotalPrice() ? $order->getTotalPrice()->getCurrencyCode() : $order->getStore()->getDefaultCurrencyCode();
 
       foreach ($order->getItems() as $item) {
-        if (isset($items_tax[$item->id()])) {
-          $item->addAdjustment(new Adjustment([
-            'type' => 'tax',
-            'label' => 'Sales tax',
-            'amount' => new Price((string) $items_tax[$item->id()], $currency_code),
-            'source_id' => $this->pluginId . '|' . $this->entityId,
-          ]));
-        }
+        $item->addAdjustment(new Adjustment([
+          'type' => 'tax',
+          'label' => $this->t('Sales tax'),
+          'amount' => new Price($items_tax[$item->id()]['amount'] ?? '0.0', $currency_code),
+          'source_id' => $this->pluginId . '|' . $this->parentEntity->id(),
+          'percentage' => $items_tax[$item->id()]['percentage'] ?? '0.0',
+        ]));
       }
 
       // Store the TaxJar data in the order.
       $order->setData($this->pluginId, [
-        'plugin_id' => $this->entityId,
+        'plugin_id' => $this->parentEntity->id(),
         'request' => $request_body,
         'response' => $response_body,
       ]);
